@@ -83,7 +83,7 @@ pub async fn observe(
                     body.truncate(end);
                     break;
                 }
-                if accepted < chunk.len() || body.len() >= max_body_bytes {
+                if accepted < chunk.len() {
                     return (Observation::BodyTooLarge, started.elapsed());
                 }
             }

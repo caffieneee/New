@@ -159,6 +159,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let targets = load_targets()?;
     let client = build_client(config.timeout_secs)?;
 
+    let estimated_sweep = config.global_spacing().saturating_mul(targets.len() as u32);
+    if estimated_sweep > config.interval() {
+        warn!(
+            estimated_sweep_secs = estimated_sweep.as_secs_f64(),
+            configured_interval_secs = config.interval().as_secs_f64(),
+            target_count = targets.len(),
+            "configured request budget cannot complete a full target sweep within one interval"
+        );
+    }
+
     info!(
         target_count = targets.len(),
         interval_ms = config.interval_ms,

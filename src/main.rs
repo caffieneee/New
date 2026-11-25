@@ -237,7 +237,8 @@ async fn observe(
                     return (Observation::BodyTooLarge, started.elapsed());
                 }
                 body.extend_from_slice(&chunk);
-                if contains_closing_head(&body) {
+                if let Some(head_end) = closing_head_end(&body) {
+                    body.truncate(head_end);
                     break;
                 }
             }
@@ -268,14 +269,14 @@ async fn observe(
 }
 
 // ASCII case-insensitive search without allocating a lowercase copy.
-fn contains_closing_head(bytes: &[u8]) -> bool {
+fn closing_head_end(bytes: &[u8]) -> Option<usize> {
     const NEEDLE: &[u8] = b"</head>";
-    bytes.windows(NEEDLE.len()).any(|window| {
+    bytes.windows(NEEDLE.len()).position(|window| {
         window
             .iter()
             .zip(NEEDLE)
             .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
-    })
+    }).map(|start| start + NEEDLE.len())
 }
 
 async fn monitor_target(
@@ -343,7 +344,7 @@ async fn monitor_target(
                 );
             }
             Observation::MarkerAbsent => {
-                info!(
+                tracing::debug!(
                     code = %target.code,
                     elapsed_ms = elapsed.as_secs_f64() * 1000.0,
                     "marker absent; result is inconclusive"
@@ -445,9 +446,9 @@ mod tests {
 
     #[test]
     fn closing_head_detection_is_case_insensitive() {
-        assert!(contains_closing_head(b"<HTML><HEAD></HEAD><body>"));
-        assert!(contains_closing_head(b"</HeAd>"));
-        assert!(!contains_closing_head(b"<head><title>x</title>"));
+        assert_eq!(closing_head_end(b"<HTML><HEAD></HEAD><body>"), Some(18));
+        assert_eq!(closing_head_end(b"</HeAd>"), Some(7));
+        assert_eq!(closing_head_end(b"<head><title>x</title>"), None);
     }
 
     #[test]

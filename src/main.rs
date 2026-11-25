@@ -78,15 +78,16 @@ impl RequestGate {
         }
     }
 
-    async fn wait_turn(&self) {
-        // Holding this small async mutex while waiting serializes request starts
-        // and enforces one shared per-origin pacing limit across all targets.
+    async fn wait_turn(&self) -> Duration {
+        // Includes lock contention and the configured shared pacing wait.
+        let started = Instant::now();
         let mut next = self.next_allowed.lock().await;
         let now = Instant::now();
         if *next > now {
             time::sleep_until(*next).await;
         }
         *next = Instant::now() + self.spacing;
+        started.elapsed()
     }
 
     async fn extend_cooldown(&self, delay: Duration) {
@@ -95,6 +96,35 @@ impl RequestGate {
         if requested > *next {
             *next = requested;
         }
+    }
+}
+
+struct LatencyMetrics {
+    semaphore_wait: Histogram<u64>,
+    request_gate_wait: Histogram<u64>,
+    observation: Histogram<u64>,
+    scheduled_to_completion: Histogram<u64>,
+}
+
+impl LatencyMetrics {
+    fn new() -> Result<Self, hdrhistogram::CreationError> {
+        Ok(Self {
+            semaphore_wait: Histogram::new(3)?,
+            request_gate_wait: Histogram::new(3)?,
+            observation: Histogram::new(3)?,
+            scheduled_to_completion: Histogram::new(3)?,
+        })
+    }
+
+    fn record(&mut self, semaphore_wait: Duration, gate_wait: Duration,
+              observation: Duration, total: Duration) {
+        fn micros(duration: Duration) -> u64 {
+            duration.as_micros().max(1).min(u64::MAX as u128) as u64
+        }
+        let _ = self.semaphore_wait.record(micros(semaphore_wait));
+        let _ = self.request_gate_wait.record(micros(gate_wait));
+        let _ = self.observation.record(micros(observation));
+        let _ = self.scheduled_to_completion.record(micros(total));
     }
 }
 
@@ -275,7 +305,7 @@ async fn monitor_target(
     config: Arc<Config>,
     gate: Arc<RequestGate>,
     semaphore: Arc<Semaphore>,
-    histogram: Arc<Mutex<Histogram<u64>>>,
+    metrics: Arc<Mutex<LatencyMetrics>>,
     mut shutdown: watch::Receiver<bool>,
 ) {
     let interval = Duration::from_millis(config.interval_ms);
@@ -291,7 +321,9 @@ async fn monitor_target(
             }
             _ = ticker.tick() => {}
         }
+        let scheduled_at = Instant::now();
 
+        let semaphore_wait_started = Instant::now();
         let permit = tokio::select! {
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
@@ -305,10 +337,13 @@ async fn monitor_target(
             }
         };
 
-        gate.wait_turn().await;
-
+        let semaphore_wait = semaphore_wait_started.elapsed();
+        let gate_wait = gate.wait_turn().await;
+        let request_started_at = Instant::now();
         let (observation, elapsed) =
             observe(&client, &target, config.max_body_bytes).await;
+        let total_elapsed = scheduled_at.elapsed();
+        let _request_window = request_started_at.elapsed();
 
         if let Observation::RateLimited { retry_after } = &observation {
             let cooldown = retry_after.unwrap_or(Duration::from_secs(30));
@@ -320,9 +355,8 @@ async fn monitor_target(
             );
         }
 
-        if let Ok(mut histogram) = histogram.lock() {
-            let micros = elapsed.as_micros().max(1).min(u64::MAX as u128) as u64;
-            let _ = histogram.record(micros);
+        if let Ok(mut metrics) = metrics.lock() {
+            metrics.record(semaphore_wait, gate_wait, elapsed, total_elapsed);
         }
 
         match &observation {
@@ -383,7 +417,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         config.global_min_spacing_ms,
     )));
     let semaphore = Arc::new(Semaphore::new(config.concurrency));
-    let histogram = Arc::new(Mutex::new(Histogram::<u64>::new(3)?));
+    let metrics = Arc::new(Mutex::new(LatencyMetrics::new()?));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut tasks = JoinSet::new();
 
@@ -394,7 +428,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Arc::clone(&config),
             Arc::clone(&gate),
             Arc::clone(&semaphore),
-            Arc::clone(&histogram),
+            Arc::clone(&metrics),
             shutdown_rx.clone(),
         ));
     }
@@ -409,16 +443,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    if let Ok(histogram) = histogram.lock() {
-        if histogram.len() > 0 {
-            info!(
-                samples = histogram.len(),
-                p50_us = histogram.value_at_quantile(0.50),
-                p95_us = histogram.value_at_quantile(0.95),
-                p99_us = histogram.value_at_quantile(0.99),
-                max_us = histogram.max(),
-                "HTTP observation latency summary"
-            );
+    if let Ok(metrics) = metrics.lock() {
+        for (name, histogram) in [
+            ("semaphore_wait", &metrics.semaphore_wait),
+            ("request_gate_wait", &metrics.request_gate_wait),
+            ("observation", &metrics.observation),
+            ("scheduled_to_completion", &metrics.scheduled_to_completion),
+        ] {
+            if histogram.len() > 0 {
+                info!(
+                    metric = name,
+                    samples = histogram.len(),
+                    p50_us = histogram.value_at_quantile(0.50),
+                    p95_us = histogram.value_at_quantile(0.95),
+                    p99_us = histogram.value_at_quantile(0.99),
+                    max_us = histogram.max(),
+                    "latency metric summary"
+                );
+            }
         }
     }
 

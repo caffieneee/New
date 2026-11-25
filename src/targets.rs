@@ -52,7 +52,7 @@ mod tests {
 
     #[test]
     fn trims_comments_and_deduplicates() {
-        let targets = parse_targets("# comment\\n alpha \\nalpha\\nbeta_2\\n").unwrap();
+        let targets = parse_targets("# comment\n alpha \nalpha\nbeta_2\n").unwrap();
         assert_eq!(targets.len(), 2);
         assert_eq!(targets[0].code, "alpha");
         assert_eq!(targets[1].code, "beta_2");
@@ -60,12 +60,12 @@ mod tests {
 
     #[test]
     fn rejects_invalid_codes() {
-        assert!(parse_targets("bad/code\\n").is_err());
-        assert!(parse_targets("x\\n").is_err());
+        assert!(parse_targets("bad/code\n").is_err());
+        assert!(parse_targets("x\n").is_err());
     }
 
     #[test]
     fn rejects_empty_input() {
-        assert!(parse_targets("# nothing here\\n").is_err());
+        assert!(parse_targets("# nothing here\n").is_err());
     }
 }

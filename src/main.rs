@@ -62,7 +62,6 @@ enum Observation {
     HttpError(StatusCode),
     NetworkError(String),
     BodyTooLarge,
-    InvalidHtml,
 }
 
 struct RequestGate {
@@ -360,9 +359,6 @@ async fn monitor_target(
             }
             Observation::BodyTooLarge => {
                 warn!(code = %target.code, "response exceeded configured body limit");
-            }
-            Observation::InvalidHtml => {
-                warn!(code = %target.code, "HTML selector could not be initialized");
             }
         }
 

@@ -1,0 +1,4 @@
+# Copy to urls.txt and add one invite code per line.
+# Blank lines and lines beginning with # are ignored.
+exampleCodeOne
+exampleCodeTwo

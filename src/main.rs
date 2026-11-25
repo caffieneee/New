@@ -3,7 +3,7 @@ use std::{
     error::Error,
     fs,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime},
 };
 
@@ -222,13 +222,14 @@ async fn observe(
     }
 
     let mut response = response;
-    let mut body = Vec::with_capacity(
-        response
-            .content_length()
-            .unwrap_or(0)
-            .min(max_body_bytes as u64) as usize,
-    );
+    let capacity = response
+        .content_length()
+        .unwrap_or(0)
+        .min(max_body_bytes as u64) as usize;
+    let mut body = Vec::with_capacity(capacity.min(16 * 1024));
 
+    // The metadata we inspect belongs in the document head. Read only until
+    // </head> when present; otherwise continue to EOF within the configured cap.
     loop {
         match response.chunk().await {
             Ok(Some(chunk)) => {
@@ -236,6 +237,9 @@ async fn observe(
                     return (Observation::BodyTooLarge, started.elapsed());
                 }
                 body.extend_from_slice(&chunk);
+                if contains_closing_head(&body) {
+                    break;
+                }
             }
             Ok(None) => break,
             Err(error) => {
@@ -249,12 +253,11 @@ async fn observe(
 
     let html = String::from_utf8_lossy(&body);
     let document = Html::parse_document(&html);
-    let selector = match Selector::parse(MARKER_SELECTOR) {
-        Ok(selector) => selector,
-        Err(_) => return (Observation::InvalidHtml, started.elapsed()),
-    };
+    let selector = MARKER.get_or_init(|| {
+        Selector::parse(MARKER_SELECTOR).expect("static metadata selector is valid")
+    });
 
-    let observation = if document.select(&selector).next().is_some() {
+    let observation = if document.select(selector).next().is_some() {
         Observation::InvalidInviteCandidate
     } else {
         // Absence of the marker is not proof that a code is taken or available.
@@ -262,6 +265,17 @@ async fn observe(
     };
 
     (observation, started.elapsed())
+}
+
+// ASCII case-insensitive search without allocating a lowercase copy.
+fn contains_closing_head(bytes: &[u8]) -> bool {
+    const NEEDLE: &[u8] = b"</head>";
+    bytes.windows(NEEDLE.len()).any(|window| {
+        window
+            .iter()
+            .zip(NEEDLE)
+            .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
+    })
 }
 
 async fn monitor_target(
@@ -422,4 +436,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     info!("monitor stopped cleanly");
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closing_head_detection_is_case_insensitive() {
+        assert!(contains_closing_head(b"<HTML><HEAD></HEAD><body>"));
+        assert!(contains_closing_head(b"</HeAd>"));
+        assert!(!contains_closing_head(b"<head><title>x</title>"));
+    }
+
+    #[test]
+    fn metadata_selector_matches_attribute_order_independently() {
+        let selector = Selector::parse(MARKER_SELECTOR).unwrap();
+        let first = Html::parse_document(
+            r#"<html><head><meta name="twitter:creator" content="@discord"></head></html>"#,
+        );
+        let second = Html::parse_document(
+            r#"<html><head><meta content="@discord" name="twitter:creator" /></head></html>"#,
+        );
+        assert!(first.select(&selector).next().is_some());
+        assert!(second.select(&selector).next().is_some());
+    }
+
+    #[test]
+    fn unrelated_metadata_does_not_match() {
+        let selector = Selector::parse(MARKER_SELECTOR).unwrap();
+        let document = Html::parse_document(
+            r#"<html><head><meta name="twitter:creator" content="@someone"></head></html>"#,
+        );
+        assert!(document.select(&selector).next().is_none());
+    }
 }

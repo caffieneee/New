@@ -95,7 +95,7 @@ pub async fn observe(
     let html = String::from_utf8_lossy(&body);
     let document = Html::parse_document(&html);
     let selector = MARKER.get_or_init(|| Selector::parse(MARKER_SELECTOR).expect("static metadata selector is valid"));
-    let result = if document.select(&selector).next().is_some() {
+    let result = if document.select(selector).next().is_some() {
         Observation::InvalidInviteCandidate
     } else {
         Observation::MarkerAbsent

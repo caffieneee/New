@@ -1,6 +1,7 @@
 use std::{hint::black_box, sync::OnceLock, time::Duration};
 
 use criterion::{criterion_group, criterion_main, Criterion};
+use invite_monitor::closing_head_end;
 use reqwest::Client;
 use scraper::{Html, Selector};
 use tokio::{
@@ -16,13 +17,6 @@ static SELECTOR: OnceLock<Selector> = OnceLock::new();
 
 fn selector() -> &'static Selector {
     SELECTOR.get_or_init(|| Selector::parse(SELECTOR_TEXT).expect("valid static selector"))
-}
-
-fn closing_head_end(bytes: &[u8]) -> Option<usize> {
-    const NEEDLE: &[u8] = b"</head>";
-    bytes.windows(NEEDLE.len()).position(|window| {
-        window.iter().zip(NEEDLE).all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
-    }).map(|start| start + NEEDLE.len())
 }
 
 async fn serve_connection(mut stream: TcpStream, response: &'static [u8]) {

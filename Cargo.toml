@@ -11,8 +11,15 @@ httpdate = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "charset", "stream"] }
 scraper = "0.20"
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "sync", "net", "io-util"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = "2"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "monitor_pipeline"
+harness = false

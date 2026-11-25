@@ -34,13 +34,20 @@ impl RequestGate {
 
     async fn wait_turn(&self) -> Duration {
         let started = Instant::now();
-        let mut next = self.next_allowed.lock().await;
-        let now = Instant::now();
-        if *next > now {
-            time::sleep_until(*next).await;
+        loop {
+            let wait_until = {
+                let mut next = self.next_allowed.lock().await;
+                let now = Instant::now();
+                if *next <= now {
+                    *next = now + self.spacing;
+                    return started.elapsed();
+                }
+                *next
+            };
+            // Do not hold the mutex while sleeping: a 429 cooldown can extend
+            // the deadline and this loop re-checks it before admitting a request.
+            time::sleep_until(wait_until).await;
         }
-        *next = Instant::now() + self.spacing;
-        started.elapsed()
     }
 
     async fn extend_cooldown(&self, delay: Duration) {
@@ -195,4 +202,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
     info!("monitor stopped cleanly");
     Ok(())
+}
+
+
+#[cfg(test)]
+mod scheduler_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cooldown_extends_a_waiting_request_deadline() {
+        let gate = Arc::new(RequestGate::new(Duration::from_millis(10)));
+        let _ = gate.wait_turn().await;
+
+        let waiting_gate = Arc::clone(&gate);
+        let waiter = tokio::spawn(async move {
+            let started = Instant::now();
+            let _ = waiting_gate.wait_turn().await;
+            started.elapsed()
+        });
+
+        time::sleep(Duration::from_millis(2)).await;
+        gate.extend_cooldown(Duration::from_millis(25)).await;
+        let waited = waiter.await.unwrap();
+        assert!(waited >= Duration::from_millis(20));
+    }
 }

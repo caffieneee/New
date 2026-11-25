@@ -5,7 +5,7 @@ use scraper::{Html, Selector};
 use tokio::time::Instant;
 use tracing::debug;
 
-use crate::closing_head_end;
+use invite_monitor::closing_head_end;
 use crate::targets::Target;
 
 const MARKER_SELECTOR: &str = r#"meta[name="twitter:creator"][content="@discord"]"#;

@@ -1,0 +1,9 @@
+# Copy this file to config.toml.
+# The monitor enforces a minimum 5-second interval per target and
+# a minimum 1-second gap between requests to the same service.
+
+interval_ms = 15000
+global_min_spacing_ms = 1000
+concurrency = 2
+timeout_secs = 8
+max_body_bytes = 262144

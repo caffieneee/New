@@ -37,12 +37,16 @@ impl Config {
         }
         let raw = fs::read_to_string("config.toml")?;
         let mut config: Self = toml::from_str(&raw)?;
-        config.interval_ms = config.interval_ms.max(MIN_TARGET_INTERVAL_MS);
-        config.global_min_spacing_ms = config.global_min_spacing_ms.max(MIN_GLOBAL_SPACING_MS);
-        config.concurrency = config.concurrency.clamp(1, 4);
-        config.timeout_secs = config.timeout_secs.clamp(2, 30);
-        config.max_body_bytes = config.max_body_bytes.clamp(32 * 1024, 2 * 1024 * 1024);
+        config.normalize();
         Ok(config)
+    }
+
+    fn normalize(&mut self) {
+        self.interval_ms = self.interval_ms.max(MIN_TARGET_INTERVAL_MS);
+        self.global_min_spacing_ms = self.global_min_spacing_ms.max(MIN_GLOBAL_SPACING_MS);
+        self.concurrency = self.concurrency.clamp(1, 4);
+        self.timeout_secs = self.timeout_secs.clamp(2, 30);
+        self.max_body_bytes = self.max_body_bytes.clamp(32 * 1024, 2 * 1024 * 1024);
     }
 
     pub fn interval(&self) -> Duration {
@@ -64,6 +68,23 @@ mod tests {
         assert!(config.interval_ms >= MIN_TARGET_INTERVAL_MS);
         assert!(config.global_min_spacing_ms >= MIN_GLOBAL_SPACING_MS);
         assert!((1..=4).contains(&config.concurrency));
+    }
+
+    #[test]
+    fn normalization_enforces_all_bounds() {
+        let mut config = Config {
+            interval_ms: 1,
+            global_min_spacing_ms: 1,
+            concurrency: 99,
+            timeout_secs: 99,
+            max_body_bytes: 1,
+        };
+        config.normalize();
+        assert_eq!(config.interval_ms, MIN_TARGET_INTERVAL_MS);
+        assert_eq!(config.global_min_spacing_ms, MIN_GLOBAL_SPACING_MS);
+        assert_eq!(config.concurrency, 4);
+        assert_eq!(config.timeout_secs, 30);
+        assert_eq!(config.max_body_bytes, 32 * 1024);
     }
 
     #[test]

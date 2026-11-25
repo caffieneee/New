@@ -1,15 +1,15 @@
-use std::time::{Duration, SystemTime};
+use std::{sync::OnceLock, time::{Duration, SystemTime}};
 
 use reqwest::{header::RETRY_AFTER, Client, StatusCode};
 use scraper::{Html, Selector};
 use tokio::time::Instant;
 use tracing::debug;
-use url::Url;
 
 use crate::closing_head_end;
 use crate::targets::Target;
 
 const MARKER_SELECTOR: &str = r#"meta[name="twitter:creator"][content="@discord"]"#;
+static MARKER: OnceLock<Selector> = OnceLock::new();
 
 #[derive(Debug)]
 pub enum Observation {
@@ -91,7 +91,7 @@ pub async fn observe(
 
     let html = String::from_utf8_lossy(&body);
     let document = Html::parse_document(&html);
-    let selector = Selector::parse(MARKER_SELECTOR).expect("static metadata selector is valid");
+    let selector = MARKER.get_or_init(|| Selector::parse(MARKER_SELECTOR).expect("static metadata selector is valid"));
     let result = if document.select(&selector).next().is_some() {
         Observation::InvalidInviteCandidate
     } else {
@@ -101,9 +101,6 @@ pub async fn observe(
     (result, started.elapsed())
 }
 
-pub fn invite_url(code: &str) -> Result<Url, url::ParseError> {
-    Url::parse(&format!("https://discord.com/invite/{code}"))
-}
 
 #[cfg(test)]
 mod tests {

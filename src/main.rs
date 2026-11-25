@@ -313,15 +313,15 @@ async fn monitor_target(
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     loop {
-        tokio::select! {
+        let scheduled_at = tokio::select! {
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
                     break;
                 }
+                continue;
             }
-            _ = ticker.tick() => {}
-        }
-        let scheduled_at = Instant::now();
+            tick = ticker.tick() => tick,
+        };
 
         let semaphore_wait_started = Instant::now();
         let permit = tokio::select! {
@@ -339,11 +339,9 @@ async fn monitor_target(
 
         let semaphore_wait = semaphore_wait_started.elapsed();
         let gate_wait = gate.wait_turn().await;
-        let request_started_at = Instant::now();
         let (observation, elapsed) =
             observe(&client, &target, config.max_body_bytes).await;
         let total_elapsed = scheduled_at.elapsed();
-        let _request_window = request_started_at.elapsed();
 
         if let Observation::RateLimited { retry_after } = &observation {
             let cooldown = retry_after.unwrap_or(Duration::from_secs(30));

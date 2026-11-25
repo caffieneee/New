@@ -2,56 +2,55 @@
 
 A Windows-friendly Rust monitor for observing public Discord invite pages. It is a monitoring and benchmarking tool only: it does not authenticate to Discord accounts, claim vanity URLs, or automate account actions.
 
+## Architecture
+
+- config.rs: configuration parsing and conservative bounds.
+- targets.rs: target validation, deduplication, and URL construction.
+- observer.rs: pooled HTTP client, bounded response reads, Retry-After parsing, and HTML classification.
+- metrics.rs: HDR histograms and shutdown summaries.
+- main.rs: Tokio scheduling, shared request gate, bounded concurrency, cancellation, and lifecycle.
+
 ## Features
 
-- One Tokio runtime for the lifetime of the process.
-- One shared Reqwest client with connection pooling.
-- Bounded worker concurrency.
-- Global request pacing and per-target polling intervals.
-- Retry-After handling for HTTP 429 responses.
-- Bounded response-body reads.
-- HTML metadata parsing instead of brittle exact-string matching.
-- Structured logs and P50/P95/P99 HTTP observation latency.
-- Graceful Ctrl+C shutdown.
+- One Tokio runtime and one shared Reqwest client.
+- Bounded worker concurrency and one global request-start gate.
+- Per-target polling intervals with missed-tick skipping.
+- Shared cooldown on HTTP 429 responses; honors Retry-After seconds or HTTP dates.
+- Bounded response-body reads and early stop after the HTML head.
+- Cached HTML selector and allocation-conscious closing-head scanner.
+- Separate P50/P95/P99/max metrics for semaphore wait, request-gate wait, observation duration, and scheduled-to-completion duration.
+- Graceful Ctrl+C cancellation of workers and in-flight observations.
 
 ## Build on Windows
 
-Install the stable Rust toolchain, then:
+Install stable Rust, then:
 
 ```powershell
 cargo build --release
-```
-
-Copy the example files:
-
-```powershell
 Copy-Item config.example.toml config.toml
 Copy-Item urls.example.txt urls.txt
-```
-
-Edit urls.txt and add one public invite code per line. Run:
-
-```powershell
 $env:RUST_LOG = "info"
 cargo run --release
 ```
 
 ## Configuration
 
-- interval_ms: per-target polling interval. The program enforces at least 5,000 ms.
-- global_min_spacing_ms: minimum time between requests to the service. The program enforces at least 1,000 ms.
-- concurrency: maximum number of in-flight observations, clamped to 1–4.
-- timeout_secs: request timeout, clamped to 2–30 seconds.
-- max_body_bytes: maximum response body size, clamped to 32 KiB–2 MiB.
+| Setting | Default | Enforced range |
+|---|---:|---:|
+| interval_ms | 15000 | minimum 5000 |
+| global_min_spacing_ms | 1000 | minimum 1000 |
+| concurrency | 2 | 1–4 |
+| timeout_secs | 8 | 2–30 |
+| max_body_bytes | 262144 | 32 KiB–2 MiB |
 
-These conservative limits are intentional. Do not increase request frequency to evade service rate limits. The monitor honors Retry-After and applies a shared cooldown.
+The request floors are deliberate. Do not increase polling frequency or rotate proxies to evade service rate limits. HTTP 429 responses pause the shared request scheduler for the supplied Retry-After duration, or 30 seconds when absent.
 
 ## Interpreting results
 
-The old implementation searched for a Discord metadata marker. This version parses the marker as HTML metadata. Finding it is reported only as an **invalid-invite candidate**. Not finding it is inconclusive. Neither result is an authoritative determination that a guild vanity URL is claimable.
+The twitter:creator=@discord marker is only an invalid-invite candidate heuristic. Its absence is inconclusive. Neither observation authoritatively determines whether a code is available or claimable.
 
-HTTP latency is measured from request start until the response body has been read and classified. It is not the same as change-to-detection latency, and it does not include any claim operation.
+Observation duration includes the request, bounded response read, and HTML parsing. Scheduled-to-completion also includes time queued for a semaphore permit and the shared request gate. These measurements do not include any claim operation or represent end-to-end change-detection latency.
 
 ## Benchmarking
 
-Use a controlled local HTTP fixture or an endpoint you own to benchmark request, body-read, parsing, and event-processing costs. Do not use high-frequency polling against Discord as a load test.
+Run cargo bench --bench monitor_pipeline on a local machine. The loopback HTTP benchmark measures local client/server overhead only; it is not a measurement of Discord network latency. Do not use Discord as a high-frequency load-test target.

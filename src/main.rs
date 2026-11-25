@@ -24,6 +24,7 @@ const MIN_TARGET_INTERVAL_MS: u64 = 5_000;
 const MIN_GLOBAL_SPACING_MS: u64 = 1_000;
 const MAX_TARGETS: usize = 1_000;
 const MARKER_SELECTOR: &str = r#"meta[name="twitter:creator"][content="@discord"]"#;
+static MARKER: OnceLock<Selector> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -446,7 +447,7 @@ mod tests {
 
     #[test]
     fn closing_head_detection_is_case_insensitive() {
-        assert_eq!(closing_head_end(b"<HTML><HEAD></HEAD><body>"), Some(18));
+        assert_eq!(closing_head_end(b"<HTML><HEAD></HEAD><body>"), Some(19));
         assert_eq!(closing_head_end(b"</HeAd>"), Some(7));
         assert_eq!(closing_head_end(b"<head><title>x</title>"), None);
     }

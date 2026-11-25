@@ -8,6 +8,7 @@ use std::{
 };
 
 use hdrhistogram::Histogram;
+use invite_monitor::closing_head_end;
 use reqwest::{header::RETRY_AFTER, Client, StatusCode};
 use scraper::{Html, Selector};
 use serde::Deserialize;
@@ -268,17 +269,6 @@ async fn observe(
     (observation, started.elapsed())
 }
 
-// ASCII case-insensitive search without allocating a lowercase copy.
-fn closing_head_end(bytes: &[u8]) -> Option<usize> {
-    const NEEDLE: &[u8] = b"</head>";
-    bytes.windows(NEEDLE.len()).position(|window| {
-        window
-            .iter()
-            .zip(NEEDLE)
-            .all(|(actual, expected)| actual.eq_ignore_ascii_case(expected))
-    }).map(|start| start + NEEDLE.len())
-}
-
 async fn monitor_target(
     target: Target,
     client: Client,
@@ -440,13 +430,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn closing_head_detection_is_case_insensitive() {
-        assert_eq!(closing_head_end(b"<HTML><HEAD></HEAD><body>"), Some(19));
-        assert_eq!(closing_head_end(b"</HeAd>"), Some(7));
-        assert_eq!(closing_head_end(b"<head><title>x</title>"), None);
-    }
 
     #[test]
     fn metadata_selector_matches_attribute_order_independently() {

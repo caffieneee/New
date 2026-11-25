@@ -75,13 +75,16 @@ pub async fn observe(
     loop {
         match response.chunk().await {
             Ok(Some(chunk)) => {
-                if body.len().saturating_add(chunk.len()) > max_body_bytes {
-                    return (Observation::BodyTooLarge, started.elapsed());
-                }
-                body.extend_from_slice(&chunk);
+                let remaining = max_body_bytes.saturating_sub(body.len());
+                let accepted = chunk.len().min(remaining);
+                body.extend_from_slice(&chunk[..accepted]);
+
                 if let Some(end) = closing_head_end(&body) {
                     body.truncate(end);
                     break;
+                }
+                if accepted < chunk.len() || body.len() >= max_body_bytes {
+                    return (Observation::BodyTooLarge, started.elapsed());
                 }
             }
             Ok(None) => break,
@@ -113,6 +116,21 @@ mod tests {
             r#"<html><head><meta content="@discord" name="twitter:creator"></head></html>"#
         );
         assert!(html.select(&selector).next().is_some());
+    }
+
+
+    #[test]
+    fn retry_after_accepts_delta_seconds() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(RETRY_AFTER, reqwest::header::HeaderValue::from_static("12"));
+        assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(12)));
+    }
+
+    #[test]
+    fn retry_after_rejects_invalid_values() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(RETRY_AFTER, reqwest::header::HeaderValue::from_static("not-a-date"));
+        assert_eq!(parse_retry_after(&headers), None);
     }
 
     #[test]

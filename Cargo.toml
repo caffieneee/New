@@ -11,7 +11,6 @@ httpdate = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "charset", "stream"] }
 scraper = "0.20"
 serde = { version = "1", features = ["derive"] }
-thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "sync"] }
 toml = "0.8"
 tracing = "0.1"

@@ -73,14 +73,6 @@ pub async fn observe(
         Err(error) => return (Observation::NetworkError(error.to_string()), started.elapsed()),
     };
 
-    // Keep validators per target so subsequent requests can use conditional GET.
-    if let Some(etag) = response.headers().get(ETAG) {
-        validators.etag = Some(etag.clone());
-    }
-    if let Some(last_modified) = response.headers().get(LAST_MODIFIED) {
-        validators.last_modified = Some(last_modified.clone());
-    }
-
     let status = response.status();
     if status == StatusCode::NOT_MODIFIED {
         return (Observation::NotModified, started.elapsed());
@@ -94,6 +86,14 @@ pub async fn observe(
     if !status.is_success() {
         return (Observation::HttpError(status), started.elapsed());
     }
+
+    // A successful representation replaces the complete validator set.
+    // If a validator is omitted, clear its previous value rather than sending
+    // a stale conditional header on the next poll. Error and 304 responses do
+    // not alter the cached representation validators.
+    validators.etag = response.headers().get(ETAG).cloned();
+    validators.last_modified = response.headers().get(LAST_MODIFIED).cloned();
+
     if response.content_length().is_some_and(|n| n > max_body_bytes as u64) {
         return (Observation::BodyTooLarge, started.elapsed());
     }
@@ -138,6 +138,22 @@ pub async fn observe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn successful_response_replaces_and_clears_missing_validators() {
+        let mut validators = Validators {
+            etag: Some(HeaderValue::from_static("\\"old-etag\\"")),
+            last_modified: Some(HeaderValue::from_static("Wed, 21 Oct 2015 07:28:00 GMT")),
+        };
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(ETAG, HeaderValue::from_static("\\"new-etag\\""));
+
+        validators.etag = headers.get(ETAG).cloned();
+        validators.last_modified = headers.get(LAST_MODIFIED).cloned();
+
+        assert_eq!(validators.etag.unwrap(), HeaderValue::from_static("\\"new-etag\\""));
+        assert!(validators.last_modified.is_none());
+    }
 
     #[test]
     fn selector_matches_expected_metadata() {

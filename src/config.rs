@@ -5,12 +5,15 @@ use tracing::warn;
 
 pub const MIN_TARGET_INTERVAL_MS: u64 = 5_000;
 pub const MIN_GLOBAL_SPACING_MS: u64 = 1_000;
+pub const MAX_PRIORITY_TARGETS: usize = 5;
 pub const MAX_TARGETS: usize = 1_000;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub interval_ms: u64,
+    pub priority_targets: usize,
+    pub priority_interval_ms: u64,
     pub global_min_spacing_ms: u64,
     pub concurrency: usize,
     pub timeout_secs: u64,
@@ -21,6 +24,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             interval_ms: 15_000,
+            priority_targets: 3,
+            priority_interval_ms: MIN_TARGET_INTERVAL_MS,
             global_min_spacing_ms: MIN_GLOBAL_SPACING_MS,
             concurrency: 2,
             timeout_secs: 8,
@@ -43,6 +48,8 @@ impl Config {
 
     fn normalize(&mut self) {
         self.interval_ms = self.interval_ms.max(MIN_TARGET_INTERVAL_MS);
+        self.priority_targets = self.priority_targets.clamp(1, MAX_PRIORITY_TARGETS);
+        self.priority_interval_ms = self.priority_interval_ms.max(MIN_TARGET_INTERVAL_MS);
         self.global_min_spacing_ms = self.global_min_spacing_ms.max(MIN_GLOBAL_SPACING_MS);
         self.concurrency = self.concurrency.clamp(1, 4);
         self.timeout_secs = self.timeout_secs.clamp(2, 30);
@@ -67,6 +74,8 @@ mod tests {
         let config = Config::default();
         assert!(config.interval_ms >= MIN_TARGET_INTERVAL_MS);
         assert!(config.global_min_spacing_ms >= MIN_GLOBAL_SPACING_MS);
+        assert_eq!(config.priority_targets, 3);
+        assert!(config.priority_interval_ms >= MIN_TARGET_INTERVAL_MS);
         assert!((1..=4).contains(&config.concurrency));
     }
 
@@ -74,6 +83,8 @@ mod tests {
     fn normalization_enforces_all_bounds() {
         let mut config = Config {
             interval_ms: 1,
+            priority_targets: 99,
+            priority_interval_ms: 1,
             global_min_spacing_ms: 1,
             concurrency: 99,
             timeout_secs: 99,
@@ -81,6 +92,8 @@ mod tests {
         };
         config.normalize();
         assert_eq!(config.interval_ms, MIN_TARGET_INTERVAL_MS);
+        assert_eq!(config.priority_targets, MAX_PRIORITY_TARGETS);
+        assert_eq!(config.priority_interval_ms, MIN_TARGET_INTERVAL_MS);
         assert_eq!(config.global_min_spacing_ms, MIN_GLOBAL_SPACING_MS);
         assert_eq!(config.concurrency, 4);
         assert_eq!(config.timeout_secs, 30);

@@ -59,6 +59,7 @@ impl RequestGate {
 
 async fn monitor_target(
     target: Target,
+    initial_delay: Duration,
     client: reqwest::Client,
     config: Arc<Config>,
     gate: Arc<RequestGate>,
@@ -69,7 +70,10 @@ async fn monitor_target(
     // acquisition from every observation and keeps async workers non-blocking.
     let mut metrics = LatencyMetrics::new().expect("valid HDR histogram configuration");
     let mut validators = Validators::default();
-    let mut ticker = time::interval(config.interval());
+    // Spread the first checks across the request slots. With five targets and
+    // the default one-second gate, this avoids a burst of five simultaneous
+    // tasks contending for the same request-start lock.
+    let mut ticker = time::interval_at(Instant::now() + initial_delay, config.interval());
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     loop {
@@ -189,9 +193,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut tasks = JoinSet::new();
 
-    for target in targets {
+    for (index, target) in targets.into_iter().enumerate() {
+        let initial_delay = target_initial_delay(index, config.global_spacing());
         tasks.spawn(monitor_target(
             target,
+            initial_delay,
             client.clone(),
             Arc::clone(&config),
             Arc::clone(&gate),
@@ -217,9 +223,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn target_initial_delay(index: usize, spacing: Duration) -> Duration {
+    spacing.saturating_mul(index as u32)
+}
+
 #[cfg(test)]
 mod scheduler_tests {
     use super::*;
+
+    #[test]
+    fn priority_targets_are_staggered_by_one_request_slot() {
+        let spacing = Duration::from_secs(1);
+        assert_eq!(target_initial_delay(0, spacing), Duration::ZERO);
+        assert_eq!(target_initial_delay(1, spacing), Duration::from_secs(1));
+        assert_eq!(target_initial_delay(4, spacing), Duration::from_secs(4));
+    }
 
     #[tokio::test]
     async fn cooldown_extends_a_waiting_request_deadline() {

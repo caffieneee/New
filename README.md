@@ -14,7 +14,7 @@ A Windows-friendly Rust monitor for observing public Discord invite pages. It is
 
 - One Tokio runtime and one shared Reqwest client.
 - Bounded worker concurrency and one global request-start gate.
-- Per-target polling intervals with missed-tick skipping.
+- A priority watchlist capped at five targets; earlier lines in `urls.txt` are higher priority. First checks are staggered across request slots, with per-target polling intervals and missed-tick skipping.
 - Per-target ETag and Last-Modified validators; unchanged pages can return 304 without downloading or parsing the HTML head again.
 - TCP keepalive and pooled connections to reduce avoidable reconnect overhead.
 - Shared cooldown on HTTP 429 responses; honors Retry-After seconds or HTTP dates.
@@ -45,7 +45,7 @@ cargo run --release
 | timeout_secs | 8 | 2–30 |
 | max_body_bytes | 262144 | 32 KiB–2 MiB |
 
-The request floors are deliberate. Do not increase polling frequency or rotate proxies to evade service rate limits. HTTP 429 responses pause the shared request scheduler for the supplied Retry-After duration, or 30 seconds when absent.
+The monitor accepts at most five targets. Put the highest-priority vanity first in `urls.txt`; the first check for each subsequent target is staggered by one configured request-spacing slot. With five targets and the default one-second spacing, the intended schedule is one new target per second over a five-second sweep, subject to request completion time. The request floors are deliberate. Do not reduce them or rotate proxies to evade service rate limits. HTTP 429 responses pause the shared request scheduler for the supplied Retry-After duration, or 30 seconds when absent.
 
 ## Interpreting results
 
@@ -69,7 +69,7 @@ start. The CI workflow remains independent.
 Before starting it, add these repository Actions secrets under
 **Settings → Secrets and variables → Actions**:
 
-- `INVITE_CODES`: newline-separated public invite codes to observe.
+- `INVITE_CODES`: up to five newline-separated public invite codes to observe, ordered highest priority first.
 - `MONITOR_CONFIG_TOML` (optional): the contents of a TOML config file.
   If omitted, the conservative built-in defaults are used.
 

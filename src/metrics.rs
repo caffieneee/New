@@ -120,7 +120,16 @@ mod tests {
             Duration::ZERO,
             Duration::from_secs(90_000),
         );
-        assert_eq!(metrics.semaphore_wait.max(), MAX_RECORDED_MICROS);
-        assert_eq!(metrics.scheduled_to_completion.max(), MAX_RECORDED_MICROS);
+
+        // HDR histograms report the upper edge of a quantized bucket, which
+        // can be slightly above the exact recorded cap at two significant figures.
+        let quantized_upper_bound = MAX_RECORDED_MICROS + MAX_RECORDED_MICROS / 100;
+        for observed_max in [
+            metrics.semaphore_wait.max(),
+            metrics.scheduled_to_completion.max(),
+        ] {
+            assert!(observed_max >= MAX_RECORDED_MICROS);
+            assert!(observed_max <= quantized_upper_bound);
+        }
     }
 }

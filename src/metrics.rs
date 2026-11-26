@@ -1,4 +1,4 @@
-use std::{sync::{Arc, Mutex}, time::Duration};
+use std::time::Duration;
 
 use hdrhistogram::Histogram;
 use tracing::info;
@@ -31,6 +31,20 @@ impl LatencyMetrics {
         let _ = self.scheduled_to_completion.record(micros(total));
     }
 
+    /// Merge one worker's private histograms into the final process summary.
+    /// Each worker records locally, avoiding a contended shared mutex on the
+    /// request hot path.
+    pub fn merge(&mut self, other: Self) {
+        self.semaphore_wait.add(&other.semaphore_wait)
+            .expect("worker histogram configuration must match");
+        self.request_gate_wait.add(&other.request_gate_wait)
+            .expect("worker histogram configuration must match");
+        self.observation.add(&other.observation)
+            .expect("worker histogram configuration must match");
+        self.scheduled_to_completion.add(&other.scheduled_to_completion)
+            .expect("worker histogram configuration must match");
+    }
+
     pub fn log_summary(&self) {
         for (name, histogram) in [
             ("semaphore_wait", &self.semaphore_wait),
@@ -53,8 +67,6 @@ impl LatencyMetrics {
     }
 }
 
-pub type SharedMetrics = Arc<Mutex<LatencyMetrics>>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,5 +84,22 @@ mod tests {
         assert_eq!(metrics.request_gate_wait.len(), 1);
         assert_eq!(metrics.observation.len(), 1);
         assert_eq!(metrics.scheduled_to_completion.len(), 1);
+    }
+
+    #[test]
+    fn merges_worker_histograms_without_losing_samples() {
+        let mut aggregate = LatencyMetrics::new().unwrap();
+        let mut worker = LatencyMetrics::new().unwrap();
+        worker.record(
+            Duration::from_micros(11),
+            Duration::from_micros(21),
+            Duration::from_micros(31),
+            Duration::from_micros(63),
+        );
+        aggregate.merge(worker);
+        assert_eq!(aggregate.semaphore_wait.len(), 1);
+        assert_eq!(aggregate.request_gate_wait.len(), 1);
+        assert_eq!(aggregate.observation.len(), 1);
+        assert_eq!(aggregate.scheduled_to_completion.len(), 1);
     }
 }

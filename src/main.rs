@@ -5,11 +5,11 @@ mod targets;
 
 use std::{
     error::Error,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 
-use metrics::{LatencyMetrics, SharedMetrics};
+use metrics::LatencyMetrics;
 use observer::{build_client, observe, Observation, Validators};
 use tokio::{
     sync::{watch, Mutex as AsyncMutex, Semaphore},
@@ -63,9 +63,11 @@ async fn monitor_target(
     config: Arc<Config>,
     gate: Arc<RequestGate>,
     semaphore: Arc<Semaphore>,
-    metrics: SharedMetrics,
     mut shutdown: watch::Receiver<bool>,
-) {
+) -> LatencyMetrics {
+    // Each worker owns its histograms. This removes a shared std::sync::Mutex
+    // acquisition from every observation and keeps async workers non-blocking.
+    let mut metrics = LatencyMetrics::new().expect("valid HDR histogram configuration");
     let mut validators = Validators::default();
     let mut ticker = time::interval(config.interval());
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -120,9 +122,7 @@ async fn monitor_target(
             );
         }
 
-        if let Ok(mut metrics) = metrics.lock() {
-            metrics.record(semaphore_wait, gate_wait, observation_elapsed, total_elapsed);
-        }
+        metrics.record(semaphore_wait, gate_wait, observation_elapsed, total_elapsed);
 
         match &observation {
             Observation::InvalidInviteCandidate => warn!(
@@ -150,6 +150,7 @@ async fn monitor_target(
     }
 
     info!(code = %target.code, "monitor stopped");
+    metrics
 }
 
 #[tokio::main]
@@ -185,7 +186,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let gate = Arc::new(RequestGate::new(config.global_spacing()));
     let semaphore = Arc::new(Semaphore::new(config.concurrency));
-    let metrics: SharedMetrics = Arc::new(Mutex::new(LatencyMetrics::new()?));
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut tasks = JoinSet::new();
 
@@ -196,7 +196,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Arc::clone(&config),
             Arc::clone(&gate),
             Arc::clone(&semaphore),
-            Arc::clone(&metrics),
             shutdown_rx.clone(),
         ));
     }
@@ -205,15 +204,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     info!("Ctrl+C received; cancelling in-flight observations");
     let _ = shutdown_tx.send(true);
 
+    let mut aggregate_metrics = LatencyMetrics::new()?;
     while let Some(result) = tasks.join_next().await {
-        if let Err(error) = result {
-            warn!(%error, "monitor worker exited unexpectedly");
+        match result {
+            Ok(worker_metrics) => aggregate_metrics.merge(worker_metrics),
+            Err(error) => warn!(%error, "monitor worker exited unexpectedly"),
         }
     }
 
-    if let Ok(metrics) = metrics.lock() {
-        metrics.log_summary();
-    }
+    aggregate_metrics.log_summary();
     info!("monitor stopped cleanly");
     Ok(())
 }

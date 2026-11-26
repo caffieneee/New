@@ -142,16 +142,16 @@ mod tests {
     #[test]
     fn successful_response_replaces_and_clears_missing_validators() {
         let mut validators = Validators {
-            etag: Some(HeaderValue::from_static("\\"old-etag\\"")),
+            etag: Some(HeaderValue::from_static(r#""old-etag""#)),
             last_modified: Some(HeaderValue::from_static("Wed, 21 Oct 2015 07:28:00 GMT")),
         };
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(ETAG, HeaderValue::from_static("\\"new-etag\\""));
+        headers.insert(ETAG, HeaderValue::from_static(r#""new-etag""#));
 
         validators.etag = headers.get(ETAG).cloned();
         validators.last_modified = headers.get(LAST_MODIFIED).cloned();
 
-        assert_eq!(validators.etag.unwrap(), HeaderValue::from_static("\\"new-etag\\""));
+        assert_eq!(validators.etag.unwrap(), HeaderValue::from_static(r#""new-etag""#));
         assert!(validators.last_modified.is_none());
     }
 

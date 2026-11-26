@@ -26,11 +26,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("SAMPLES must be between 1 and 5".into());
     }
 
-    // This is the same pooled Reqwest stack used by the monitor, not a new
-    // curl process for every sample. Bodies are consumed so connections can
-    // return to the pool for later requests.
+    // One client is shared across all configured targets, which use the same
+    // host. A later request is only a reuse candidate; socket reuse itself is
+    // not exposed by Reqwest as a per-request metric.
     let client = reqwest::Client::builder()
-        .user_agent("public-invite-monitor-benchmark/0.1")
+        .user_agent("public-invite-monitor/0.3")
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(15))
         .pool_idle_timeout(Duration::from_secs(90))
@@ -97,9 +97,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let body_elapsed = body_started.elapsed();
             let total_elapsed = started.elapsed();
 
-            // The label is deliberately conservative: Reqwest does not expose
-            // a public per-request "socket reused" flag.
-            let phase = if sample == 1 { "initial_for_target" } else { "subsequent_candidate" };
+            // This classification applies to the whole shared host pool,
+            // not each target: later requests may reuse a prior target's socket.
+            let phase = if count == 0 { "first_request" } else { "pooled_reuse_candidate" };
             writeln!(
                 output,
                 "{},{},{},{},{:.3},{:.3},{:.3},{}",

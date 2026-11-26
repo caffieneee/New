@@ -6,7 +6,7 @@ A Windows-friendly Rust monitor for observing public Discord invite pages. It is
 
 - config.rs: configuration parsing and conservative bounds.
 - targets.rs: target validation, deduplication, and URL construction.
-- observer.rs: pooled HTTP client, bounded response reads, Retry-After parsing, and HTML classification.
+- observer.rs: pooled HTTP client, conditional requests, bounded response reads, Retry-After parsing, and HTML classification.
 - metrics.rs: HDR histograms and shutdown summaries.
 - main.rs: Tokio scheduling, shared request gate, bounded concurrency, cancellation, and lifecycle.
 
@@ -15,6 +15,8 @@ A Windows-friendly Rust monitor for observing public Discord invite pages. It is
 - One Tokio runtime and one shared Reqwest client.
 - Bounded worker concurrency and one global request-start gate.
 - Per-target polling intervals with missed-tick skipping.
+- Per-target ETag and Last-Modified validators; unchanged pages can return 304 without downloading or parsing the HTML head again.
+- TCP keepalive and pooled connections to reduce avoidable reconnect overhead.
 - Shared cooldown on HTTP 429 responses; honors Retry-After seconds or HTTP dates.
 - Bounded response-body reads and early stop after the HTML head.
 - Cached HTML selector and allocation-conscious closing-head scanner.
@@ -49,12 +51,11 @@ The request floors are deliberate. Do not increase polling frequency or rotate p
 
 The twitter:creator=@discord marker is only an invalid-invite candidate heuristic. Its absence is inconclusive. Neither observation authoritatively determines whether a code is available or claimable.
 
-Observation duration includes the request, bounded response read, and HTML parsing. Scheduled-to-completion also includes time queued for a semaphore permit and the shared request gate. These measurements do not include any claim operation or represent end-to-end change-detection latency.
+Observation duration includes the request, bounded response read, and HTML parsing. Scheduled-to-completion also includes time queued for a semaphore permit and the shared request gate. These measurements do not include any claim operation or represent end-to-end change-detection latency. Conditional requests can reduce transferred bytes and parsing work, but cannot remove network round-trip time.
 
 ## Benchmarking
 
 Run cargo bench --bench monitor_pipeline on a local machine. The loopback HTTP benchmark measures local client/server overhead only; it is not a measurement of Discord network latency. Do not use Discord as a high-frequency load-test target.
-
 
 ## GitHub Actions runtime
 

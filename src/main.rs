@@ -10,7 +10,7 @@ use std::{
 };
 
 use metrics::{LatencyMetrics, SharedMetrics};
-use observer::{build_client, observe, Observation};
+use observer::{build_client, observe, Observation, Validators};
 use tokio::{
     sync::{watch, Mutex as AsyncMutex, Semaphore},
     task::JoinSet,
@@ -44,8 +44,6 @@ impl RequestGate {
                 }
                 *next
             };
-            // Do not hold the mutex while sleeping: a 429 cooldown can extend
-            // the deadline and this loop re-checks it before admitting a request.
             time::sleep_until(wait_until).await;
         }
     }
@@ -68,6 +66,7 @@ async fn monitor_target(
     metrics: SharedMetrics,
     mut shutdown: watch::Receiver<bool>,
 ) {
+    let mut validators = Validators::default();
     let mut ticker = time::interval(config.interval());
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
@@ -106,7 +105,7 @@ async fn monitor_target(
                 if changed.is_err() || *shutdown.borrow() { break; }
                 continue;
             }
-            result = observe(&client, &target, config.max_body_bytes) => result,
+            result = observe(&client, &target, config.max_body_bytes, &mut validators) => result,
         };
         let total_elapsed = scheduled_at.elapsed();
 
@@ -135,6 +134,11 @@ async fn monitor_target(
                 code = %target.code,
                 elapsed_ms = observation_elapsed.as_secs_f64() * 1000.0,
                 "metadata marker absent; result is inconclusive"
+            ),
+            Observation::NotModified => tracing::trace!(
+                code = %target.code,
+                elapsed_ms = observation_elapsed.as_secs_f64() * 1000.0,
+                "page unchanged; server returned 304 Not Modified"
             ),
             Observation::RateLimited { .. } => {}
             Observation::HttpError(status) => warn!(code = %target.code, %status, "HTTP error"),
@@ -213,7 +217,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     info!("monitor stopped cleanly");
     Ok(())
 }
-
 
 #[cfg(test)]
 mod scheduler_tests {

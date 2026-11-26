@@ -54,3 +54,32 @@ Observation duration includes the request, bounded response read, and HTML parsi
 ## Benchmarking
 
 Run cargo bench --bench monitor_pipeline on a local machine. The loopback HTTP benchmark measures local client/server overhead only; it is not a measurement of Discord network latency. Do not use Discord as a high-frequency load-test target.
+
+
+## GitHub Actions runtime
+
+The repository includes a separate rolling runtime workflow at
+`.github/workflows/monitor.yml`. Start the first session manually from
+**Actions → Invite Monitor Runtime → Run workflow**. The workflow builds the
+release binary, runs the monitor for about 5 hours 30 minutes, queues one
+successor before shutdown, and exits gracefully so the queued session can
+start. The CI workflow remains independent.
+
+Before starting it, add these repository Actions secrets under
+**Settings → Secrets and variables → Actions**:
+
+- `INVITE_CODES`: newline-separated public invite codes to observe.
+- `MONITOR_CONFIG_TOML` (optional): the contents of a TOML config file.
+  If omitted, the conservative built-in defaults are used.
+
+The workflow uses the automatically provided `GITHUB_TOKEN` with
+`actions: write` to dispatch its successor; no personal access token is
+needed. The runtime concurrency group prevents overlapping sessions and
+keeps the successor queued until the current session ends.
+
+GitHub-hosted runners are ephemeral and successor startup is not guaranteed
+to be gap-free. This is a best-effort rolling monitor, not an always-on VPS.
+GitHub Actions runner placement and network latency vary between sessions.
+The monitor only observes public invite pages, respects the configured
+request floor and Discord `Retry-After` responses, and does not claim or
+modify invite codes.

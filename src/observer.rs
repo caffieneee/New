@@ -1,6 +1,9 @@
 use std::{sync::OnceLock, time::{Duration, SystemTime}};
 
-use reqwest::{header::RETRY_AFTER, Client, StatusCode};
+use reqwest::{
+    header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED, RETRY_AFTER, HeaderValue},
+    Client, StatusCode,
+};
 use scraper::{Html, Selector};
 use tokio::time::Instant;
 use tracing::debug;
@@ -11,10 +14,17 @@ use crate::targets::Target;
 const MARKER_SELECTOR: &str = r#"meta[name="twitter:creator"][content="@discord"]"#;
 static MARKER: OnceLock<Selector> = OnceLock::new();
 
+#[derive(Default)]
+pub struct Validators {
+    etag: Option<HeaderValue>,
+    last_modified: Option<HeaderValue>,
+}
+
 #[derive(Debug)]
 pub enum Observation {
     InvalidInviteCandidate,
     MarkerAbsent,
+    NotModified,
     RateLimited { retry_after: Option<Duration> },
     HttpError(StatusCode),
     NetworkError(String),
@@ -23,12 +33,13 @@ pub enum Observation {
 
 pub fn build_client(timeout_secs: u64) -> Result<Client, reqwest::Error> {
     Client::builder()
-        .user_agent("public-invite-monitor/0.2")
+        .user_agent("public-invite-monitor/0.3")
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(timeout_secs))
         .pool_idle_timeout(Duration::from_secs(90))
         .pool_max_idle_per_host(4)
         .tcp_nodelay(true)
+        .tcp_keepalive(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
 }
@@ -46,14 +57,34 @@ pub async fn observe(
     client: &Client,
     target: &Target,
     max_body_bytes: usize,
+    validators: &mut Validators,
 ) -> (Observation, Duration) {
     let started = Instant::now();
-    let response = match client.get(target.url.clone()).send().await {
+    let mut request = client.get(target.url.clone());
+    if let Some(etag) = &validators.etag {
+        request = request.header(IF_NONE_MATCH, etag.clone());
+    }
+    if let Some(last_modified) = &validators.last_modified {
+        request = request.header(IF_MODIFIED_SINCE, last_modified.clone());
+    }
+
+    let response = match request.send().await {
         Ok(response) => response,
         Err(error) => return (Observation::NetworkError(error.to_string()), started.elapsed()),
     };
 
+    // Keep validators per target so subsequent requests can use conditional GET.
+    if let Some(etag) = response.headers().get(ETAG) {
+        validators.etag = Some(etag.clone());
+    }
+    if let Some(last_modified) = response.headers().get(LAST_MODIFIED) {
+        validators.last_modified = Some(last_modified.clone());
+    }
+
     let status = response.status();
+    if status == StatusCode::NOT_MODIFIED {
+        return (Observation::NotModified, started.elapsed());
+    }
     if status == StatusCode::TOO_MANY_REQUESTS {
         return (
             Observation::RateLimited { retry_after: parse_retry_after(response.headers()) },
@@ -104,7 +135,6 @@ pub async fn observe(
     (result, started.elapsed())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,18 +148,17 @@ mod tests {
         assert!(html.select(&selector).next().is_some());
     }
 
-
     #[test]
     fn retry_after_accepts_delta_seconds() {
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(RETRY_AFTER, reqwest::header::HeaderValue::from_static("12"));
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("12"));
         assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(12)));
     }
 
     #[test]
     fn retry_after_rejects_invalid_values() {
         let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(RETRY_AFTER, reqwest::header::HeaderValue::from_static("not-a-date"));
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("not-a-date"));
         assert_eq!(parse_retry_after(&headers), None);
     }
 

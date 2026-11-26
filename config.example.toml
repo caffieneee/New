@@ -1,7 +1,7 @@
 # Copy this file to config.toml.
-# The first three non-comment entries in urls.txt are priority targets.
-# Priority targets use a 5-second timer; remaining targets use interval_ms.
-# All requests share the global request spacing and 429 cooldown.
+# The first entries in urls.txt are priority targets.
+# A central dispatcher prioritizes due targets while keeping a fair turn
+# for regular targets. All requests share global spacing and 429 cooldown.
 
 interval_ms = 15000
 priority_targets = 3

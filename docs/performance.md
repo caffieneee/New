@@ -11,6 +11,8 @@ The process reports four HDR histogram summaries on shutdown:
 
 The four values are not additive in every scenario because scheduling and asynchronous wake-up overhead overlap. Compare distributions across repeated runs rather than subtracting individual quantiles.
 
+Worker-local histograms use bounded ranges (1 microsecond through 24 hours) and two significant figures. This keeps per-target metric memory bounded; values beyond 24 hours are clamped to the upper bound.
+
 ## Interpreting a 20 ms target
 
 A sub-20 ms local parsing or scheduler operation can be measurable on a suitable machine. A sub-20 ms end-to-end public-page detection guarantee is not realistic: remote network round-trip time, server response time, DNS/TLS setup, polling cadence, and scheduling all contribute. The configured polling interval is intentionally no lower than 5 seconds and the shared request-start spacing no lower than 1 second.
@@ -26,7 +28,7 @@ The CSV records:
 - `headers_ms`: request start until response headers arrive (includes DNS, connection setup when needed, network transit, and server response time).
 - `body_ms`: time to consume the response body after headers arrive.
 - `total_ms`: request start through complete body consumption.
-- `connection_phase`: `initial_for_target` or `subsequent_candidate`. This is a classification only; Reqwest does not expose a public per-request socket-reuse flag.
+- `connection_phase`: `first_request` or `pooled_reuse_candidate`. The latter means a prior request used the shared host pool; it does not prove socket reuse because Reqwest does not expose a public per-request socket-reuse flag.
 
 The benchmark stops on HTTP 429 and never retries. It does not print invite codes. A successful response does not prove that an invite is claimable or available.
 

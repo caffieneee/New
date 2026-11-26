@@ -3,6 +3,10 @@ use std::time::Duration;
 use hdrhistogram::Histogram;
 use tracing::info;
 
+// One worker owns four histograms. Bound their memory use even when a target
+// is stalled for a long time; values beyond one day are recorded at the cap.
+const MAX_RECORDED_MICROS: u64 = 86_400_000_000;
+
 pub struct LatencyMetrics {
     semaphore_wait: Histogram<u64>,
     request_gate_wait: Histogram<u64>,
@@ -11,19 +15,23 @@ pub struct LatencyMetrics {
 }
 
 impl LatencyMetrics {
+    fn histogram() -> Result<Histogram<u64>, hdrhistogram::CreationError> {
+        Histogram::new_with_bounds(1, MAX_RECORDED_MICROS, 2)
+    }
+
     pub fn new() -> Result<Self, hdrhistogram::CreationError> {
         Ok(Self {
-            semaphore_wait: Histogram::new(3)?,
-            request_gate_wait: Histogram::new(3)?,
-            observation: Histogram::new(3)?,
-            scheduled_to_completion: Histogram::new(3)?,
+            semaphore_wait: Self::histogram()?,
+            request_gate_wait: Self::histogram()?,
+            observation: Self::histogram()?,
+            scheduled_to_completion: Self::histogram()?,
         })
     }
 
     pub fn record(&mut self, semaphore_wait: Duration, gate_wait: Duration,
                   observation: Duration, total: Duration) {
         fn micros(duration: Duration) -> u64 {
-            duration.as_micros().max(1).min(u64::MAX as u128) as u64
+            duration.as_micros().max(1).min(MAX_RECORDED_MICROS as u128) as u64
         }
         let _ = self.semaphore_wait.record(micros(semaphore_wait));
         let _ = self.request_gate_wait.record(micros(gate_wait));
@@ -101,5 +109,27 @@ mod tests {
         assert_eq!(aggregate.request_gate_wait.len(), 1);
         assert_eq!(aggregate.observation.len(), 1);
         assert_eq!(aggregate.scheduled_to_completion.len(), 1);
+    }
+
+    #[test]
+    fn clamps_extreme_samples_to_bounded_histogram_range() {
+        let mut metrics = LatencyMetrics::new().unwrap();
+        metrics.record(
+            Duration::from_secs(90_000),
+            Duration::ZERO,
+            Duration::ZERO,
+            Duration::from_secs(90_000),
+        );
+
+        // HDR histograms report the upper edge of a quantized bucket, which
+        // can be slightly above the exact recorded cap at two significant figures.
+        let quantized_upper_bound = MAX_RECORDED_MICROS + MAX_RECORDED_MICROS / 100;
+        for observed_max in [
+            metrics.semaphore_wait.max(),
+            metrics.scheduled_to_completion.max(),
+        ] {
+            assert!(observed_max >= MAX_RECORDED_MICROS);
+            assert!(observed_max <= quantized_upper_bound);
+        }
     }
 }

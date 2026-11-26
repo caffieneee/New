@@ -1,0 +1,138 @@
+name: Invite Monitor Runtime
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+# Keep one active monitor and at most one queued successor.
+concurrency:
+  group: invite-monitor-runtime
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Cargo build cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release monitor
+        run: cargo build --release
+
+      - name: Prepare runtime configuration
+        env:
+          INVITE_CODES: ${{ secrets.INVITE_CODES }}
+          MONITOR_CONFIG_TOML: ${{ secrets.MONITOR_CONFIG_TOML }}
+        run: |
+          set -euo pipefail
+          if [ -z "${INVITE_CODES:-}" ]; then
+            echo "::error::Create the INVITE_CODES repository secret with one public invite code per line."
+            exit 1
+          fi
+          umask 077
+          printf '%s\n' "$INVITE_CODES" > urls.txt
+          if [ -n "${MONITOR_CONFIG_TOML:-}" ]; then
+            printf '%s\n' "$MONITOR_CONFIG_TOML" > config.toml
+          fi
+          test -s urls.txt
+
+      - name: Run rolling monitor session
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          MONITOR_PID=""
+          start_monitor() {
+            echo "Starting public invite-page monitor..."
+            ./target/release/invite-monitor &
+            MONITOR_PID=$!
+          }
+
+          stop_monitor() {
+            if [ -n "$MONITOR_PID" ] && kill -0 "$MONITOR_PID" 2>/dev/null; then
+              echo "Sending graceful shutdown to monitor..."
+              kill -INT "$MONITOR_PID" || true
+              for _ in $(seq 1 20); do
+                kill -0 "$MONITOR_PID" 2>/dev/null || break
+                sleep 1
+              done
+              if kill -0 "$MONITOR_PID" 2>/dev/null; then
+                echo "Grace period elapsed; terminating monitor."
+                kill -TERM "$MONITOR_PID" || true
+              fi
+            fi
+            if [ -n "$MONITOR_PID" ]; then
+              wait "$MONITOR_PID" 2>/dev/null || true
+            fi
+          }
+          trap stop_monitor EXIT INT TERM
+
+          dispatch_successor() {
+            local attempt code
+            for attempt in 1 2 3; do
+              code=$(curl --silent --show-error --output /tmp/dispatch-response.txt \
+                --write-out '%{http_code}' \
+                --request POST \
+                --header "Authorization: Bearer $GH_TOKEN" \
+                --header "Accept: application/vnd.github+json" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                --header "Content-Type: application/json" \
+                "https://api.github.com/repos/$REPOSITORY/actions/workflows/monitor.yml/dispatches" \
+                --data "{\"ref\":\"$REF_NAME\"}") || code="000"
+              if [ "$code" = "204" ]; then
+                echo "Successor workflow queued successfully."
+                return 0
+              fi
+              echo "Successor dispatch attempt $attempt failed (HTTP $code)."
+              sleep 10
+            done
+            echo "::error::Could not queue the successor workflow."
+            return 1
+          }
+
+          start_monitor
+          session_started=$SECONDS
+          successor_dispatched=false
+          dispatch_after=19500  # 5h25m
+          stop_after=19800      # 5h30m
+
+          while true; do
+            elapsed=$((SECONDS - session_started))
+
+            if [ "$successor_dispatched" = false ] && [ "$elapsed" -ge "$dispatch_after" ]; then
+              dispatch_successor
+              successor_dispatched=true
+            fi
+
+            if [ "$elapsed" -ge "$stop_after" ]; then
+              echo "Session window complete; handing off to successor."
+              break
+            fi
+
+            if ! kill -0 "$MONITOR_PID" 2>/dev/null; then
+              echo "Monitor exited; restarting after a short delay."
+              wait "$MONITOR_PID" || true
+              sleep 5
+              start_monitor
+            fi
+            sleep 10
+          done
+
+          stop_monitor
+          trap - EXIT INT TERM
+          echo "Monitor session completed."

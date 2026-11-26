@@ -5,7 +5,7 @@ use tracing::warn;
 
 pub const MIN_TARGET_INTERVAL_MS: u64 = 5_000;
 pub const MIN_GLOBAL_SPACING_MS: u64 = 1_000;
-pub const MAX_TARGETS: usize = 1_000;
+pub const MAX_TARGETS: usize = 5;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]

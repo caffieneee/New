@@ -1,6 +1,7 @@
 # Copy this file to config.toml.
 # The monitor enforces a minimum 5-second interval per target and
 # a minimum 1-second gap between requests to the same service.
+# Up to five targets are accepted; list highest priority first.
 
 interval_ms = 15000
 global_min_spacing_ms = 1000

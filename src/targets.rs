@@ -65,6 +65,12 @@ mod tests {
     }
 
     #[test]
+    fn rejects_more_than_five_targets() {
+        let input = "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\n";
+        assert!(parse_targets(input).is_err());
+    }
+
+    #[test]
     fn rejects_empty_input() {
         assert!(parse_targets("# nothing here\n").is_err());
     }

@@ -1,4 +1,4 @@
-# Copy to urls.txt and add one invite code per line.
+# Copy to urls.txt and add up to five invite codes, highest priority first.
 # Blank lines and lines beginning with # are ignored.
 exampleCodeOne
 exampleCodeTwo

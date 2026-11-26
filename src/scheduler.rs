@@ -229,7 +229,7 @@ pub async fn run(
                             state.in_flight = false;
                             state.validators = validators;
 
-                            let dispatch_wait = request_started.saturating_duration_since(scheduled_at);
+                            let dispatch_wait = request_started.duration_since(scheduled_at);
                             let scheduled_to_completion = scheduled_at.elapsed();
                             state.metrics.record(dispatch_wait, elapsed, scheduled_to_completion);
 

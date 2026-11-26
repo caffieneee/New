@@ -15,7 +15,7 @@ A Windows-friendly Rust monitor for observing public Discord invite pages. It is
 
 - One Tokio runtime and one shared Reqwest client.
 - A central dispatcher replaces per-target timer workers competing for a shared request gate.
-- First five watchlist entries are priority-eligible; default priority count is three.
+- Up to five watchlist entries can be priority-eligible; the default priority count is three.
 - Priority requests are dispatched first, with a bounded burst of five before a due regular target gets a turn.
 - A bounded number of observations can be in flight concurrently.
 - One global request-start spacing budget prevents uncontrolled request bursts.

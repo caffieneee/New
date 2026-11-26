@@ -30,11 +30,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Run conservative network measurements
+      - name: Set up stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run pooled Reqwest measurements
         env:
           INVITE_CODES: ${{ secrets.INVITE_CODES }}
           SAMPLES: ${{ inputs.samples }}
-        run: python3 scripts/network_benchmark.py
+        run: cargo run --release --bin reqwest_network_benchmark
 
       - name: Upload measurements
         if: always()

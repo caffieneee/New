@@ -63,13 +63,14 @@ async fn monitor_target(
     config: Arc<Config>,
     gate: Arc<RequestGate>,
     semaphore: Arc<Semaphore>,
+    poll_interval: Duration,
     mut shutdown: watch::Receiver<bool>,
 ) -> LatencyMetrics {
     // Each worker owns its histograms. This removes a shared std::sync::Mutex
     // acquisition from every observation and keeps async workers non-blocking.
     let mut metrics = LatencyMetrics::new().expect("valid HDR histogram configuration");
     let mut validators = Validators::default();
-    let mut ticker = time::interval(config.interval());
+    let mut ticker = time::interval(poll_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     loop {
@@ -170,6 +171,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             estimated_sweep_secs = estimated_sweep.as_secs_f64(),
             configured_interval_secs = config.interval().as_secs_f64(),
             target_count = targets.len(),
+        priority_targets = config.priority_targets.min(targets.len()),
+        priority_interval_ms = config.priority_interval_ms,
             "configured request budget cannot complete a full target sweep within one interval"
         );
     }
@@ -189,13 +192,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let mut tasks = JoinSet::new();
 
-    for target in targets {
+    for (index, target) in targets.into_iter().enumerate() {
+        let is_priority = index < config.priority_targets;
+        let poll_interval = if is_priority {
+            Duration::from_millis(config.priority_interval_ms)
+        } else {
+            config.interval()
+        };
+        info!(code = %target.code, priority = is_priority, poll_interval_ms = poll_interval.as_millis(), "target scheduled");
         tasks.spawn(monitor_target(
             target,
             client.clone(),
             Arc::clone(&config),
             Arc::clone(&gate),
             Arc::clone(&semaphore),
+            poll_interval,
             shutdown_rx.clone(),
         ));
     }

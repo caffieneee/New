@@ -14,6 +14,7 @@ A Windows-friendly Rust monitor for observing public Discord invite pages. It is
 
 - One Tokio runtime and one shared Reqwest client.
 - Bounded worker concurrency and one global request-start gate.
+- Priority watchlist: the first three entries in `urls.txt` use a 5-second timer by default; remaining entries use `interval_ms` (15 seconds by default).
 - Per-target polling intervals with missed-tick skipping.
 - Per-target ETag and Last-Modified validators; unchanged pages can return 304 without downloading or parsing the HTML head again.
 - TCP keepalive and pooled connections to reduce avoidable reconnect overhead.
@@ -39,13 +40,15 @@ cargo run --release
 
 | Setting | Default | Enforced range |
 |---|---:|---:|
-| interval_ms | 15000 | minimum 5000 |
+| interval_ms | 15000 | minimum 5000 (non-priority targets) |
+| priority_targets | 3 | 1–5 |
+| priority_interval_ms | 5000 | minimum 5000 |
 | global_min_spacing_ms | 1000 | minimum 1000 |
 | concurrency | 2 | 1–4 |
 | timeout_secs | 8 | 2–30 |
 | max_body_bytes | 262144 | 32 KiB–2 MiB |
 
-The request floors are deliberate. Do not increase polling frequency or rotate proxies to evade service rate limits. HTTP 429 responses pause the shared request scheduler for the supplied Retry-After duration, or 30 seconds when absent.
+The first `priority_targets` entries in `urls.txt` form the priority watchlist (default: first 3). Put the most important codes first. Priority polling uses `priority_interval_ms` (default 5 seconds); remaining targets use `interval_ms`. All targets still share the global request-start spacing and 429 cooldown, so a 5-second timer does not guarantee a completed request every 5 seconds. The enforced 1-second global spacing remains in place. Do not rotate proxies to evade service rate limits. HTTP 429 responses pause the shared request scheduler for the supplied Retry-After duration, or 30 seconds when absent.
 
 ## Interpreting results
 

@@ -1,8 +1,11 @@
 # Copy this file to config.toml.
-# The monitor enforces a minimum 5-second interval per target and
-# a minimum 1-second gap between requests to the same service.
+# The first three non-comment entries in urls.txt are priority targets.
+# Priority targets use a 5-second timer; remaining targets use interval_ms.
+# All requests share the global request spacing and 429 cooldown.
 
 interval_ms = 15000
+priority_targets = 3
+priority_interval_ms = 5000
 global_min_spacing_ms = 1000
 concurrency = 2
 timeout_secs = 8

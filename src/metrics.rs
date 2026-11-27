@@ -35,7 +35,6 @@ impl LatencyMetrics {
         let _ = self.scheduled_to_completion.record(micros(total));
     }
 
-    /// Merge one target's private histograms into the process summary.
     pub fn merge(&mut self, other: Self) {
         self.dispatch_wait.add(&other.dispatch_wait)
             .expect("target histogram configuration must match");
@@ -46,6 +45,10 @@ impl LatencyMetrics {
     }
 
     pub fn log_summary(&self) {
+        self.log_summary_for("aggregate", false);
+    }
+
+    pub fn log_summary_for(&self, target: &str, priority: bool) {
         for (name, histogram) in [
             ("dispatch_wait", &self.dispatch_wait),
             ("observation", &self.observation),
@@ -53,6 +56,8 @@ impl LatencyMetrics {
         ] {
             if histogram.len() > 0 {
                 info!(
+                    target,
+                    priority,
                     metric = name,
                     samples = histogram.len(),
                     p50_us = histogram.value_at_quantile(0.50),

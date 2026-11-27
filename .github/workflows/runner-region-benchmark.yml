@@ -1,0 +1,77 @@
+name: GitHub Runner Region Benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-invite-runner-region-benchmark
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Runner probe ${{ matrix.probe }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        probe: [1, 2, 3, 4, 5]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Record approximate runner location
+        shell: bash
+        run: |
+          set -euo pipefail
+          if curl --fail --silent --show-error --max-time 8 https://ipapi.co/json/ | jq '{city, region, country_name}' > runner-location.json; then
+            echo "Approximate egress location:"
+            cat runner-location.json
+          else
+            printf '%s\\n' '{"location":"unavailable"}' > runner-location.json
+            echo "Location lookup unavailable; continuing benchmark."
+          fi
+
+      - name: Run one spaced pooled-client sample per target
+        env:
+          INVITE_CODES: ${{ secrets.INVITE_CODES }}
+          SAMPLES: "1"
+          RUNNER_PROBE: ${{ matrix.probe }}
+        run: cargo run --release --bin reqwest_network_benchmark
+
+      - name: Publish probe summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Runner probe ${{ matrix.probe }}"
+            echo
+            echo "Approximate egress location (IP geolocation; not a guaranteed VM region):"
+            cat runner-location.json 2>/dev/null || echo "Unavailable"
+            echo
+            if [ -f network-latency.csv ]; then
+              echo 'Measured request timings:'
+              echo '```csv'
+              cat network-latency.csv
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload probe measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runner-region-probe-${{ matrix.probe }}
+          path: |
+            runner-location.json
+            network-latency.csv
+          if-no-files-found: ignore
+          retention-days: 14

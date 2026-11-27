@@ -35,13 +35,23 @@ The benchmark stops on HTTP 429 and never retries. It does not print invite code
 
 The older `scripts/network_benchmark.py` script remains available for cold-process curl comparisons. Its separate curl processes do not share a connection pool, so do not compare its timings directly with the pooled Reqwest benchmark.
 
+## GitHub runner region comparison
+
+Run **Actions → GitHub Runner Region Benchmark → Run workflow**. The workflow creates five sequential, fresh GitHub-hosted runner jobs. Each job records an approximate egress city/region/country using IP geolocation and runs one pass over the configured targets with the production Reqwest client. Each target request remains separated by at least five seconds; the jobs are serialized to avoid multiplying request pressure against the same host.
+
+Download the five artifacts named `runner-region-probe-1` through `runner-region-probe-5`. Compare `headers_ms` and `total_ms` by target and by observed egress location. Treat IP geolocation as approximate metadata, not proof of the VM's physical region.
+
+**Important placement limitation:** standard `ubuntu-latest` GitHub-hosted runners do not expose a workflow input for choosing an arbitrary geographic region. GitHub may schedule eligible Linux jobs across its supported cloud providers, but this workflow measures the locations actually observed; it does not pretend that matrix labels pin regions. If all five jobs land in the same area, the result is a repeatability sample, not a multi-region comparison. Deterministic Azure-region placement requires GitHub's larger-runner/Azure private-network configuration and the necessary organization/enterprise entitlements and Azure setup.
+
+The location lookup contacts the public `ipapi.co` service. If it is unavailable, the benchmark still runs and records the location as unavailable. No invite codes are sent to that service.
+
 ## Benchmark sequence
 
 1. Run the Criterion suite on the same Windows machine and power profile used for development.
 2. Record compiler version, CPU, OS, and whether the build is release mode.
 3. Compare the scanner and parser benchmarks independently from the loopback HTTP benchmark.
 4. Run the pooled Reqwest workflow against configured public pages, observing the five-second request-start floor.
-5. Repeat runs and compare P50/P95/P99; avoid conclusions from one small sample.
+5. Run the serialized runner-location comparison and compare P50/P95/P99 across repeated runs.
 6. Compare per-target dispatch-wait distributions to see whether priority targets are actually receiving faster scheduling under the same request budget.
 
 The loopback HTTP benchmark measures local client/server overhead only. It is not a measurement of Discord's network latency.

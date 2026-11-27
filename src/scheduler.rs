@@ -263,7 +263,8 @@ pub async fn run(
 
     let mut aggregate = LatencyMetrics::new()?;
     for state in states {
-        info!(code = %state.target.code, "monitor stopped");
+        info!(code = %state.target.code, priority = state.priority, "monitor stopped; per-target latency summary follows");
+        state.metrics.log_summary_for(&state.target.code, state.priority);
         aggregate.merge(state.metrics);
     }
     aggregate.log_summary();
